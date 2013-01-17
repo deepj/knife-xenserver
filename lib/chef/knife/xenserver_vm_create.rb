@@ -54,12 +54,10 @@ class Chef
       option :vm_memory,
         :long => "--vm-memory AMOUNT",
         :description => "The memory limits of the Virtual Machine",
-        :default => '512'
       
       option :vm_cpus,
         :long => "--vm-cpus AMOUNT",
         :description => "The VCPUs of the Virtual Machine",
-        :default => '1'
 
       option :bootstrap_version,
         :long => "--bootstrap-version VERSION",
@@ -111,13 +109,6 @@ class Chef
       option :skip_bootstrap,
         :long => "--skip-bootstrap",
         :description => "Skip bootstrap process (Deploy only mode)",
-        :boolean => true,
-        :default => false,
-        :proc => Proc.new { true }
-      
-      option :keep_template_networks,
-        :long => "--keep-template-networks",
-        :description => "Do no remove template inherited networks (VIFs)",
         :boolean => true,
         :default => false,
         :proc => Proc.new { true }
@@ -217,19 +208,21 @@ class Chef
         vm = connection.servers.new :name => config[:vm_name],
                                     :template_name => config[:vm_template]
         vm.save :auto_start => false
-        if not config[:keep_template_networks]
-          vm.vifs.each do |vif|
-            vif.destroy
-          end 
-          vm.reload
+
+        if config[:vm_networks] or config[:mac_addresses]
+          vm.vifs.each(&:destroy)
+
+          create_nics(config[:vm_networks], config[:mac_addresses], vm.reload)
         end
-        if config[:vm_networks]
-          create_nics(config[:vm_networks], config[:mac_addresses], vm)
+
+        if config[:vm_memory]
+          mem = (config[:vm_memory].to_i * 1024 * 1024).to_s
+          vm.set_attribute 'memory_limits', mem, mem, mem, mem
         end
-        mem = (config[:vm_memory].to_i * 1024 * 1024).to_s
-        vm.set_attribute 'memory_limits', mem, mem, mem, mem
-        vm.set_attribute 'VCPUs_max', config[:vm_cpus]
-        vm.set_attribute 'VCPUs_at_startup', config[:vm_cpus]
+
+        vm.set_attribute 'VCPUs_max', config[:vm_cpus] if config[:vm_cpus]
+        vm.set_attribute 'VCPUs_at_startup', config[:vm_cpus] if config[:vm_cpus]
+        vm.set_attribute 'tags', config[:vm_tags].split(',') if config[:vm_tags]
 
         # network configuration through xenstore
         attrs = {}
@@ -243,9 +236,6 @@ class Chef
           vm.set_attribute 'xenstore_data', attrs
         end
 
-        if config[:vm_tags]
-          vm.set_attribute 'tags', config[:vm_tags].split(',')
-        end
         vm.provision
         vm.start
         vm.reload
